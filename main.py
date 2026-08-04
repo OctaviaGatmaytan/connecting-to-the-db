@@ -78,27 +78,53 @@ def update_task(id: int, body: dict):
     if not body:
         return JSONResponse(status_code=400, content={"error": "Body is required"})
 
-    for task in tasks:
-        if task["id"] == id:
-            if "title" in body:
-                title = body["title"].strip()
-                if not title:
-                    return JSONResponse(status_code=400, content={"error": "Title cannot be empty"})
-                task["title"] = title
+    conn = get_connection()
+    cur = conn.cursor()
 
-            if "done" in body:
-                task["done"] = body["done"]
+    cur.execute("SELECT id, title, done FROM tasks WHERE id = ?", (id,))
+    row = cur.fetchone()
 
-            return task
+    if not row:
+        conn.close()
+        return JSONResponse(status_code=404, content={"error": f"Task {id} not found"})
 
-    return JSONResponse(status_code=404, content={"error": f"Task {id} not found"})
+    title = row["title"]
+    done = row["done"]
+
+    if "title" in body:
+        new_title = body["title"].strip()
+        if not new_title:
+            conn.close()
+            return JSONResponse(status_code=400, content={"error": "Title cannot be empty"})
+        title = new_title
+
+    if "done" in body:
+        done = 1 if body["done"] else 0
+
+    cur.execute(
+        "UPDATE tasks SET title = ?, done = ? WHERE id = ?",
+        (title, done, id),
+    )
+    conn.commit()
+
+    cur.execute("SELECT id, title, done FROM tasks WHERE id = ?", (id,))
+    updated = cur.fetchone()
+    conn.close()
+
+    return row_to_task(updated)
 
 
 @app.delete("/tasks/{id}")
 def delete_task(id: int):
-    for i, task in enumerate(tasks):
-        if task["id"] == id:
-            del tasks[i]
-            return Response(status_code=204)
+    conn = get_connection()
+    cur = conn.cursor()
 
-    return JSONResponse(status_code=404, content={"error": f"Task {id} not found"})
+    cur.execute("DELETE FROM tasks WHERE id = ?", (id,))
+
+    if cur.rowcount == 0:
+        conn.close()
+        return JSONResponse(status_code=404, content={"error": f"Task {id} not found"})
+
+    conn.commit()
+    conn.close()
+    return Response(status_code=204)
