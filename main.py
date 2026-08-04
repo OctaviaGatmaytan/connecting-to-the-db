@@ -5,40 +5,17 @@ import sqlite3
 app = FastAPI()
 DB_NAME = "tasks.db"
 
+tasks = [
+    {"id": 1, "title": "Buy groceries", "done": True},
+    {"id": 2, "title": "Work on assignments", "done": False},
+    {"id": 3, "title": "Visit grandma", "done": False},
+]
+
 
 def get_connection():
     conn = sqlite3.connect(DB_NAME)
     conn.row_factory = sqlite3.Row
     return conn
-
-
-def init_db():
-    conn = get_connection()
-    cur = conn.cursor()
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS tasks (
-        id INTEGER PRIMARY KEY,
-        title TEXT NOT NULL,
-        done INTEGER NOT NULL DEFAULT 0
-    )
-    """)
-
-    cur.execute("SELECT COUNT(*) FROM tasks")
-    count = cur.fetchone()[0]
-
-    if count == 0:
-        cur.executemany(
-            "INSERT INTO tasks (title, done) VALUES (?, ?)",
-            [
-                ("Buy groceries", 1),
-                ("Work on assignments", 0),
-                ("Visit grandma", 0),
-            ],
-        )
-
-    conn.commit()
-    conn.close()
 
 
 def row_to_task(row):
@@ -47,9 +24,6 @@ def row_to_task(row):
         "title": row["title"],
         "done": bool(row["done"]),
     }
-
-
-init_db()
 
 
 @app.get("/tasks")
@@ -73,7 +47,7 @@ def get_task(id: int):
     if row:
         return row_to_task(row)
 
-    return JSONResponse(status_code=404, content={"error": f"Task {id} not found"})
+    return JSONResponse(status_code=404, content={"error": "Task not found"})
 
 
 @app.post("/tasks", status_code=201)
@@ -82,17 +56,10 @@ def create_task(task: dict):
     if not title:
         return JSONResponse(status_code=400, content={"error": "Title is required"})
 
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute("INSERT INTO tasks (title, done) VALUES (?, ?)", (title, 0))
-    conn.commit()
-
-    new_id = cur.lastrowid
-    cur.execute("SELECT id, title, done FROM tasks WHERE id = ?", (new_id,))
-    row = cur.fetchone()
-    conn.close()
-
-    return row_to_task(row)
+    next_id = max(task["id"] for task in tasks) + 1 if tasks else 1
+    new_task = {"id": next_id, "title": title, "done": False}
+    tasks.append(new_task)
+    return new_task
 
 
 @app.put("/tasks/{id}")
@@ -100,51 +67,27 @@ def update_task(id: int, body: dict):
     if not body:
         return JSONResponse(status_code=400, content={"error": "Body is required"})
 
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT id, title, done FROM tasks WHERE id = ?", (id,))
-    row = cur.fetchone()
+    for task in tasks:
+        if task["id"] == id:
+            if "title" in body:
+                title = body["title"].strip()
+                if not title:
+                    return JSONResponse(status_code=400, content={"error": "Title cannot be empty"})
+                task["title"] = title
 
-    if not row:
-        conn.close()
-        return JSONResponse(status_code=404, content={"error": f"Task {id} not found"})
+            if "done" in body:
+                task["done"] = body["done"]
 
-    title = row["title"]
-    done = row["done"]
+            return task
 
-    if "title" in body:
-        new_title = body["title"].strip()
-        if not new_title:
-            conn.close()
-            return JSONResponse(status_code=400, content={"error": "Title cannot be empty"})
-        title = new_title
-
-    if "done" in body:
-        done = 1 if body["done"] else 0
-
-    cur.execute(
-        "UPDATE tasks SET title = ?, done = ? WHERE id = ?",
-        (title, done, id),
-    )
-    conn.commit()
-
-    cur.execute("SELECT id, title, done FROM tasks WHERE id = ?", (id,))
-    updated = cur.fetchone()
-    conn.close()
-
-    return row_to_task(updated)
+    return JSONResponse(status_code=404, content={"error": f"Task {id} not found"})
 
 
 @app.delete("/tasks/{id}")
 def delete_task(id: int):
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute("DELETE FROM tasks WHERE id = ?", (id,))
+    for i, task in enumerate(tasks):
+        if task["id"] == id:
+            del tasks[i]
+            return Response(status_code=204)
 
-    if cur.rowcount == 0:
-        conn.close()
-        return JSONResponse(status_code=404, content={"error": f"Task {id} not found"})
-
-    conn.commit()
-    conn.close()
-    return Response(status_code=204)
+    return JSONResponse(status_code=404, content={"error": f"Task {id} not found"})
